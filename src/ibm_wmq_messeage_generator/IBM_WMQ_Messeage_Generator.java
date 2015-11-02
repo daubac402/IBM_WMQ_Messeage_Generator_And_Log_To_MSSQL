@@ -46,16 +46,16 @@ public class IBM_WMQ_Messeage_Generator {
     public static final int PORT_NUMBER = 1313;
     public static final String QUEUE_MANAGER_NAME = "QM_TEST";
     public static final String QUEUE_NAME = "Q2";
-    public static final String LOGIN_USERNAME = "";
-    public static final String LOGIN_PASSWORD = "";
+    public static final String LOGIN_USERNAME = "username";
+    public static final String LOGIN_PASSWORD = "password";
     public static final int NUMBER_OF_MESSEAGE = 999999999; //max queue depth
 //    public static final int     NUMBER_OF_MESSEAGE  = 10;
 //    public static String SERVER_FOLDER_ACCESS_URL = "C:\\test_txt";
     public static String SERVER_FOLDER_ACCESS_URL = "S:\\temp\\LM_testdata";
     public static String LOCAL_FOLDER_ACCESS_URL = "C:\\test_txt";
-    public static String JDBC_CONNECT_STRING = "jdbc:sqlserver://servername;databaseName=";
-    public static String JDBC_DB_USER = "";
-    public static String JDBC_DB_PASSWORD = "";
+    public static String JDBC_CONNECT_STRING = "jdbc:oracle:thin:user/pass@servername:port:orcl";
+    public static String JDBC_DB_USER = "user";
+    public static String JDBC_DB_PASSWORD = "pass";
     public static int SLEEP_MILISECOND_IF_NOT_FOUND_NEW_FILE = 5000; // 5 seconds
     public static int MAX_FILE_PROCESS_PER_TIME = 2;
     /**
@@ -83,7 +83,7 @@ public class IBM_WMQ_Messeage_Generator {
             while (true) {
                 int processed_file = putMessageFromFolder(SERVER_FOLDER_ACCESS_URL, LOCAL_FOLDER_ACCESS_URL);
                 if (processed_file == 0) {
-                    System.out.println("Not found new text file in server folder, Automatically recheck in " + SLEEP_MILISECOND_IF_NOT_FOUND_NEW_FILE + "miliseconds.");
+                    System.out.println("Not found new text file in server folder, Automatically recheck in " + SLEEP_MILISECOND_IF_NOT_FOUND_NEW_FILE + " miliseconds.");
                     Thread.sleep(SLEEP_MILISECOND_IF_NOT_FOUND_NEW_FILE);
                 }
             }
@@ -138,7 +138,7 @@ public class IBM_WMQ_Messeage_Generator {
      */
     public static void createDBConnection() throws ClassNotFoundException, SQLException {
         System.out.println("Connecting to DB");
-        Class.forName("com.microsoft.sqlserver.jdbc.SQLServerDriver");
+//        Class.forName("oracle.jdbc.OracleDriver");
         DBconnection = DriverManager.getConnection(JDBC_CONNECT_STRING, JDBC_DB_USER, JDBC_DB_PASSWORD);
         System.out.println("DB connected");
         statement = DBconnection.createStatement();
@@ -192,23 +192,24 @@ public class IBM_WMQ_Messeage_Generator {
         File server_folder = new File(server_folder_address_url);
         File local_folder = new File(local_folder_address_url);
 
-        // Get the last file that read
-        ResultSet rs = statement.executeQuery("SELECT TOP 1 FileName FROM ReadFile ORDER BY id DESC");
-        String last_read_file_name = "";
-        while (rs.next()) {
-            last_read_file_name = rs.getString("FileName");
-            break;
-        }
-        if (last_read_file_name.isEmpty()) {
-            System.out.println(">>> Last read filename not found, Start reading all files.");
-        } else {
-            System.out.println(">>> Last read filename: " + last_read_file_name);
-        }
-
         // Get file from server folder
         File[] server_file_list = server_folder.listFiles();
         if (server_file_list.length > 0) {
             Arrays.sort(server_file_list);
+            
+            // Get the last file that read
+            ResultSet rs = statement.executeQuery("SELECT IFFILENAME FROM mqinsfile WHERE ROWNUM = 1 ORDER BY MQINSERTDATE DESC");
+            String last_read_file_name = "";
+            while (rs.next()) {
+                last_read_file_name = rs.getString("IFFILENAME");
+                break;
+            }
+            if (last_read_file_name.isEmpty()) {
+                System.out.println(">>> Last read filename not found, Start reading all files.");
+            } else {
+                System.out.println(">>> Last read filename: " + last_read_file_name);
+            }
+            
             for (File server_file : server_file_list) {
 //                if (process_file + 1 > MAX_FILE_PROCESS_PER_TIME) {
 //                    break;
@@ -216,9 +217,8 @@ public class IBM_WMQ_Messeage_Generator {
 
                 if (!server_file.isDirectory() && server_file.getName().endsWith(".txt")) {
                     //check exist folder, if not create folder at local following: YYYYMMDD_HH
-                    SimpleDateFormat sdfDate = new SimpleDateFormat("YYYY_MM_dd_HH");
-                    Date now = new Date();
-                    String child_local_folder_name = sdfDate.format(now);
+                    SimpleDateFormat format_child_local_folder_date = new SimpleDateFormat("YYYY_MM_dd_HH");
+                    String child_local_folder_name = format_child_local_folder_date.format(new Date());
                     File child_local_folder = new File(local_folder.getAbsolutePath() + "\\" + child_local_folder_name);
                     if (!child_local_folder.exists()) {
                         boolean mkdir_result = child_local_folder.mkdir();
@@ -260,7 +260,11 @@ public class IBM_WMQ_Messeage_Generator {
 
                         // Log read file to DB
                         System.out.println("+++ Marking As Read to Database: " + local_fle.getName());
-                        statement.execute("INSERT ReadFile(FileName) VALUES ('" + local_fle.getName() + "')");
+                        SimpleDateFormat format_insert_file_time = new SimpleDateFormat("YYYY/MM/dd HH:mm:ss:SSS");
+                        statement.execute("INSERT INTO mqinsfile VALUES ('" 
+                                + format_insert_file_time.format(new Date())
+                                + "','" + child_local_folder_name 
+                                +"','" + local_fle.getName() +"')");
 
                         process_file++;
                     } catch (IOException ex) {
