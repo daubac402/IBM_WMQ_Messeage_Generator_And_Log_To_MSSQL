@@ -9,9 +9,11 @@ import com.ibm.mq.jms.MQQueueSender;
 import com.ibm.mq.jms.MQQueueSession;
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
@@ -23,6 +25,7 @@ import java.sql.Statement;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Date;
+import java.util.Properties;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.jms.DeliveryMode;
@@ -42,21 +45,7 @@ public class IBM_WMQ_Messeage_Generator {
      * ****************************************************************************
      */
     // CONSTANT ZONE
-    public static final String HOST_NAME = "localhost";
-    public static final int PORT_NUMBER = 1313;
-    public static final String QUEUE_MANAGER_NAME = "QM_TEST";
-    public static final String QUEUE_NAME = "Q2";
-    public static final String LOGIN_USERNAME = "username";
-    public static final String LOGIN_PASSWORD = "password";
-    public static final int NUMBER_OF_MESSEAGE = 999999999; //max queue depth
-//    public static final int     NUMBER_OF_MESSEAGE  = 10;
-//    public static String SERVER_FOLDER_ACCESS_URL = "C:\\test_txt";
-    public static String SERVER_FOLDER_ACCESS_URL = "S:\\temp\\LM_testdata";
-    public static String LOCAL_FOLDER_ACCESS_URL = "C:\\test_txt";
-    public static String JDBC_CONNECT_STRING = "jdbc:oracle:thin:user/pass@servername:port:orcl";
-    public static String JDBC_DB_USER = "user";
-    public static String JDBC_DB_PASSWORD = "pass";
-    public static int SLEEP_MILISECOND_IF_NOT_FOUND_NEW_FILE = 5000; // 5 seconds
+    public static String CONFIG_FILE = "./main_config.ini";
     public static int MAX_FILE_PROCESS_PER_TIME = 2;
     /**
      * ****************************************************************************
@@ -68,6 +57,19 @@ public class IBM_WMQ_Messeage_Generator {
     private static Statement statement;
     private static Connection DBconnection;
 
+    private static String HOST_NAME;
+    private static int PORT_NUMBER;
+    private static String QUEUE_MANAGER_NAME;
+    private static String QUEUE_NAME;
+    private static String LOGIN_USERNAME;
+    private static String LOGIN_PASSWORD;
+    private static String SERVER_FOLDER_ACCESS_URL;
+    private static String LOCAL_FOLDER_ACCESS_URL;
+    private static String JDBC_CONNECT_STRING;
+    private static String JDBC_DB_USER;
+    private static String JDBC_DB_PASSWORD;
+    private static int SLEEP_MILISECOND_IF_NOT_FOUND_NEW_FILE;
+
     /**
      * main function
      *
@@ -76,7 +78,19 @@ public class IBM_WMQ_Messeage_Generator {
      */
     @SuppressWarnings("SleepWhileInLoop")
     public static void main(String[] args) throws InterruptedException {
+        if (args.length > 0)
+        {
+            CONFIG_FILE = args[0];
+        }
+        else
+        {
+            System.err.println("Wrong command usage, Please use: java -jar \"main program jar URL\" \"main config URL\"");
+            return;
+        }
+        
         try {
+            loadConfiguration();
+
             createMQConnection();
             createDBConnection();
 
@@ -87,11 +101,13 @@ public class IBM_WMQ_Messeage_Generator {
                     Thread.sleep(SLEEP_MILISECOND_IF_NOT_FOUND_NEW_FILE);
                 }
             }
-
 //            closeMQConnection();
 //            closeDBConnection();
         } catch (JMSException | ClassNotFoundException | SQLException ex) {
             Logger.getLogger(IBM_WMQ_Messeage_Generator.class.getName()).log(Level.SEVERE, null, ex);
+        } catch (IOException ex) {
+            Logger.getLogger(IBM_WMQ_Messeage_Generator.class.getName()).log(Level.SEVERE, null, ex);
+            System.out.println("Can not read config file");
         }
     }
 
@@ -196,7 +212,7 @@ public class IBM_WMQ_Messeage_Generator {
         File[] server_file_list = server_folder.listFiles();
         if (server_file_list.length > 0) {
             Arrays.sort(server_file_list);
-            
+
             // Get the last file that read
             ResultSet rs = statement.executeQuery("SELECT IFFILENAME FROM mqinsfile WHERE ROWNUM = 1 ORDER BY MQINSERTDATE DESC");
             String last_read_file_name = "";
@@ -209,7 +225,7 @@ public class IBM_WMQ_Messeage_Generator {
             } else {
                 System.out.println(">>> Last read filename: " + last_read_file_name);
             }
-            
+
             for (File server_file : server_file_list) {
 //                if (process_file + 1 > MAX_FILE_PROCESS_PER_TIME) {
 //                    break;
@@ -261,10 +277,10 @@ public class IBM_WMQ_Messeage_Generator {
                         // Log read file to DB
                         System.out.println("+++ Marking As Read to Database: " + local_fle.getName());
                         SimpleDateFormat format_insert_file_time = new SimpleDateFormat("YYYY/MM/dd HH:mm:ss:SSS");
-                        statement.execute("INSERT INTO mqinsfile VALUES ('" 
+                        statement.execute("INSERT INTO mqinsfile VALUES ('"
                                 + format_insert_file_time.format(new Date())
-                                + "','" + child_local_folder_name 
-                                +"','" + local_fle.getName() +"')");
+                                + "','" + child_local_folder_name
+                                + "','" + local_fle.getName() + "')");
 
                         process_file++;
                     } catch (IOException ex) {
@@ -275,5 +291,47 @@ public class IBM_WMQ_Messeage_Generator {
             }
         }
         return process_file;
+    }
+
+    private static void loadConfiguration() throws IOException {
+        System.out.println("Start loading Configuration");
+        Properties prop = new Properties();
+        InputStream inputConfigStream = new FileInputStream(CONFIG_FILE);
+        prop.load(inputConfigStream);
+        HOST_NAME = prop.getProperty("mq_host_name");
+        System.out.println("mq_host_name = " + HOST_NAME);
+        try {
+            PORT_NUMBER = Integer.parseInt(prop.getProperty("mq_port_number"));
+            System.out.println("mq_port_number = " + PORT_NUMBER);
+        } catch (NumberFormatException ex) {
+            Logger.getLogger(IBM_WMQ_Messeage_Generator.class.getName()).log(Level.SEVERE, null, ex);
+            System.out.println("Port number must be integer");
+        }
+        QUEUE_MANAGER_NAME = prop.getProperty("mq_queue_manager");
+        System.out.println("mq_queue_manager = " + QUEUE_MANAGER_NAME);
+        QUEUE_NAME = prop.getProperty("mq_queue_name");
+        System.out.println("mq_queue_name = " + QUEUE_NAME);
+        LOGIN_USERNAME = prop.getProperty("mq_os_login_user");
+        System.out.println("mq_os_login_user = " + LOGIN_USERNAME);
+        LOGIN_PASSWORD = prop.getProperty("mq_os_login_password");
+        System.out.println("mq_os_login_password = " + LOGIN_PASSWORD);
+        SERVER_FOLDER_ACCESS_URL = prop.getProperty("server_folder_url");
+        System.out.println("server_folder_url = " + SERVER_FOLDER_ACCESS_URL);
+        LOCAL_FOLDER_ACCESS_URL = prop.getProperty("local_folder_url");
+        System.out.println("local_folder_url = " + LOCAL_FOLDER_ACCESS_URL);
+        JDBC_CONNECT_STRING = prop.getProperty("jdbc_connect_string");
+        System.out.println("jdbc_connect_string = " + JDBC_CONNECT_STRING);
+        JDBC_DB_USER = prop.getProperty("jdbc_user");
+        System.out.println("jdbc_user = " + JDBC_DB_USER);
+        JDBC_DB_PASSWORD = prop.getProperty("jdbc_password");
+        System.out.println("jdbc_password = " + JDBC_DB_PASSWORD);
+        try {
+            SLEEP_MILISECOND_IF_NOT_FOUND_NEW_FILE = Integer.parseInt(prop.getProperty("sleep_miliseconds_if_not_found_any_new_file"));
+            System.out.println("sleep_miliseconds_if_not_found_any_new_file = " + SLEEP_MILISECOND_IF_NOT_FOUND_NEW_FILE);
+        } catch (NumberFormatException ex) {
+            Logger.getLogger(IBM_WMQ_Messeage_Generator.class.getName()).log(Level.SEVERE, null, ex);
+            System.out.println("Sleep time(miliseconds) must be integer");
+        }
+        System.out.println("Done loading Configuration");
     }
 }
