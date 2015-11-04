@@ -86,7 +86,7 @@ public class IBM_WMQ_Messeage_Generator {
         if (args.length > 0) {
             CONFIG_FILE = args[0];
         } else {
-            System.err.println("Wrong command usage, Please use: java -jar \"main program jar URL\" \"main config URL\"");
+            System.out.println("Wrong command usage, Please use: java -jar \"main program jar URL\" \"main config URL\"");
             return;
         }
 
@@ -294,6 +294,9 @@ public class IBM_WMQ_Messeage_Generator {
                         }
 
                         // Read each line then insert Msg to MQ
+                        SimpleDateFormat format_insert_file_time = new SimpleDateFormat("YYYY/MM/dd HH:mm:ss:SSS");
+                        String insert_file_time_string = format_insert_file_time.format(new Date());
+                        int seqNo = 0;
                         System.out.println("--- Reading file: " + local_fle.getName());
                         try {
                             FileReader in = new FileReader(local_fle);
@@ -301,6 +304,9 @@ public class IBM_WMQ_Messeage_Generator {
                             String line;
                             while ((line = br.readLine()) != null) {
                                 if (!"".equalsIgnoreCase(line)) {
+                                    // merged MQ Insert date and Seq Number to message, split by ","
+                                    seqNo++;
+                                    line = insert_file_time_string + "," + seqNo + "," + line;
                                     putMesseageToMQ(line);
                                 }
                             }
@@ -310,9 +316,8 @@ public class IBM_WMQ_Messeage_Generator {
 
                         // Log read file to DB
                         System.out.println("+++ Marking As Read to Database: " + local_fle.getName());
-                        SimpleDateFormat format_insert_file_time = new SimpleDateFormat("YYYY/MM/dd HH:mm:ss:SSS");
                         statement.execute("INSERT INTO mqinsfile VALUES ('"
-                                + format_insert_file_time.format(new Date())
+                                + insert_file_time_string
                                 + "','" + child_local_folder_name
                                 + "','" + local_fle.getName() + "')");
 
