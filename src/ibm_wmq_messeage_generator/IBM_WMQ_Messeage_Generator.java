@@ -46,7 +46,9 @@ public class IBM_WMQ_Messeage_Generator {
      */
     // CONSTANT ZONE
     public static String CONFIG_FILE = "./main_config.ini";
-    public static int MAX_FILE_PROCESS_PER_TIME = 2;
+    public static final int MAX_FILE_PROCESS_PER_TIME = 2;
+    private static final int MAX_NUMBER_TRY_BEFORE_CLOSE_CONNECTION = 3;
+
     /**
      * ****************************************************************************
      */
@@ -69,7 +71,10 @@ public class IBM_WMQ_Messeage_Generator {
     private static String JDBC_DB_USER;
     private static String JDBC_DB_PASSWORD;
     private static int SLEEP_MILISECOND_IF_NOT_FOUND_NEW_FILE;
-
+    private static boolean isMQConnected = false;
+    private static boolean isDBConnected = false;
+    private static int try_number_not_found_new_file = 0;
+    
     /**
      * main function
      *
@@ -78,16 +83,13 @@ public class IBM_WMQ_Messeage_Generator {
      */
     @SuppressWarnings("SleepWhileInLoop")
     public static void main(String[] args) throws InterruptedException {
-        if (args.length > 0)
-        {
+        if (args.length > 0) {
             CONFIG_FILE = args[0];
-        }
-        else
-        {
+        } else {
             System.err.println("Wrong command usage, Please use: java -jar \"main program jar URL\" \"main config URL\"");
             return;
         }
-        
+
         try {
             loadConfiguration();
 
@@ -98,6 +100,11 @@ public class IBM_WMQ_Messeage_Generator {
                 int processed_file = putMessageFromFolder(SERVER_FOLDER_ACCESS_URL, LOCAL_FOLDER_ACCESS_URL);
                 if (processed_file == 0) {
                     System.out.println("Not found new text file in server folder, Automatically recheck in " + SLEEP_MILISECOND_IF_NOT_FOUND_NEW_FILE + " miliseconds.");
+                    try_number_not_found_new_file++;
+                    if (try_number_not_found_new_file == MAX_NUMBER_TRY_BEFORE_CLOSE_CONNECTION) {
+                        closeDBConnection();
+                        closeMQConnection();
+                    }
                     Thread.sleep(SLEEP_MILISECOND_IF_NOT_FOUND_NEW_FILE);
                 }
             }
@@ -117,6 +124,9 @@ public class IBM_WMQ_Messeage_Generator {
      * @throws JMSException
      */
     public static void createMQConnection() throws JMSException {
+        if (isMQConnected) {
+            return;
+        }
         System.out.println("Connecting to MQ");
         MQQueueConnectionFactory cf = new MQQueueConnectionFactory();
         cf.setHostName(HOST_NAME);
@@ -131,6 +141,7 @@ public class IBM_WMQ_Messeage_Generator {
         sender.setPriority(0); //if not, default is 4
         sender.setDeliveryMode(DeliveryMode.PERSISTENT); //DeliveryMode.PERSISTENT, the default
         MQconnection.start();
+        isMQConnected = true;
         System.out.println("MQ connected");
     }
 
@@ -140,10 +151,14 @@ public class IBM_WMQ_Messeage_Generator {
      * @throws JMSException
      */
     public static void closeMQConnection() throws JMSException {
+        if (!isMQConnected) {
+            return;
+        }
         sender.close();
         session.close();
         MQconnection.close();
-        System.out.println("DONE");
+        isMQConnected = false;
+        System.out.println("MQ connection is closed");
     }
 
     /**
@@ -153,10 +168,15 @@ public class IBM_WMQ_Messeage_Generator {
      * @throws SQLException
      */
     public static void createDBConnection() throws ClassNotFoundException, SQLException {
+        if (isDBConnected) {
+            return;
+        }
         System.out.println("Connecting to DB");
 //        Class.forName("oracle.jdbc.OracleDriver");
         DBconnection = DriverManager.getConnection(JDBC_CONNECT_STRING, JDBC_DB_USER, JDBC_DB_PASSWORD);
         System.out.println("DB connected");
+        System.out.println("Auto commit: " + DBconnection.getAutoCommit());
+        isDBConnected = true;
         statement = DBconnection.createStatement();
     }
 
@@ -166,7 +186,12 @@ public class IBM_WMQ_Messeage_Generator {
      * @throws SQLException
      */
     public static void closeDBConnection() throws SQLException {
+        if (!isDBConnected) {
+            return;
+        }
+        isDBConnected = false;
         DBconnection.close();
+        System.out.println("DB connection is closed");
     }
 
     /**
@@ -203,35 +228,44 @@ public class IBM_WMQ_Messeage_Generator {
      * @throws JMSException
      * @throws SQLException
      */
-    private static int putMessageFromFolder(String server_folder_address_url, String local_folder_address_url) throws JMSException, SQLException {
+    private static int putMessageFromFolder(String server_folder_address_url, String local_folder_address_url) throws JMSException, SQLException, ClassNotFoundException {
         int process_file = 0;
         File server_folder = new File(server_folder_address_url);
         File local_folder = new File(local_folder_address_url);
 
         // Get file from server folder
+        boolean one_time_flag = false;
+        String last_read_file_name = "";
         File[] server_file_list = server_folder.listFiles();
-        if (server_file_list.length > 0) {
+        if (server_file_list != null && server_file_list.length > 0) {
             Arrays.sort(server_file_list);
-
-            // Get the last file that read
-            ResultSet rs = statement.executeQuery("SELECT IFFILENAME FROM mqinsfile WHERE ROWNUM = 1 ORDER BY MQINSERTDATE DESC");
-            String last_read_file_name = "";
-            while (rs.next()) {
-                last_read_file_name = rs.getString("IFFILENAME");
-                break;
-            }
-            if (last_read_file_name.isEmpty()) {
-                System.out.println(">>> Last read filename not found, Start reading all files.");
-            } else {
-                System.out.println(">>> Last read filename: " + last_read_file_name);
-            }
-
             for (File server_file : server_file_list) {
 //                if (process_file + 1 > MAX_FILE_PROCESS_PER_TIME) {
 //                    break;
 //                }
 
                 if (!server_file.isDirectory() && server_file.getName().endsWith(".txt")) {
+                    if (!one_time_flag)
+                    {
+                        // Try to create connection
+                        createMQConnection();
+                        createDBConnection();
+                        try_number_not_found_new_file = 0;
+
+                        // Get the last file that read
+                        ResultSet rs = statement.executeQuery("SELECT IFFILENAME FROM mqinsfile WHERE ROWNUM = 1 ORDER BY MQINSERTDATE DESC");
+                        while (rs.next()) {
+                            last_read_file_name = rs.getString("IFFILENAME");
+                            break;
+                        }
+                        if (last_read_file_name.isEmpty()) {
+                            System.out.println(">>> Last read filename not found, Start reading all files.");
+                        } else {
+                            System.out.println(">>> Last read filename: " + last_read_file_name);
+                        }
+                        one_time_flag = true;
+                    }
+                    
                     //check exist folder, if not create folder at local following: YYYYMMDD_HH
                     SimpleDateFormat format_child_local_folder_date = new SimpleDateFormat("YYYY_MM_dd_HH");
                     String child_local_folder_name = format_child_local_folder_date.format(new Date());
