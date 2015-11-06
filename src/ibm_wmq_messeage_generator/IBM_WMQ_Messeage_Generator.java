@@ -1,12 +1,5 @@
 package ibm_wmq_messeage_generator;
 
-import com.ibm.jms.JMSTextMessage;
-import com.ibm.mq.jms.JMSC;
-import com.ibm.mq.jms.MQQueue;
-import com.ibm.mq.jms.MQQueueConnection;
-import com.ibm.mq.jms.MQQueueConnectionFactory;
-import com.ibm.mq.jms.MQQueueSender;
-import com.ibm.mq.jms.MQQueueSession;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
@@ -28,14 +21,9 @@ import java.util.Date;
 import java.util.Properties;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javax.jms.DeliveryMode;
-import javax.jms.JMSException;
-import javax.jms.Queue;
-import javax.jms.Session;
 
 /**
- * Automatically get text files from server, move them to local then put to MQ
- * and log to database
+ * Automatically get text files from server, put messages then log to database
  *
  * @author theanh@ilovex.co.jp
  */
@@ -53,18 +41,9 @@ public class IBM_WMQ_Messeage_Generator {
      * ****************************************************************************
      */
     // GLOBAL VARIABLE ZONE
-    private static MQQueueConnection MQconnection;
-    private static MQQueueSession session;
-    private static MQQueueSender sender;
     private static Statement statement;
     private static Connection DBconnection;
 
-    private static String HOST_NAME;
-    private static int PORT_NUMBER;
-    private static String QUEUE_MANAGER_NAME;
-    private static String QUEUE_NAME;
-    private static String LOGIN_USERNAME;
-    private static String LOGIN_PASSWORD;
     private static String SERVER_FOLDER_ACCESS_URL;
     private static String LOCAL_FOLDER_ACCESS_URL;
     private static String JDBC_CONNECT_STRING;
@@ -93,7 +72,6 @@ public class IBM_WMQ_Messeage_Generator {
         try {
             loadConfiguration();
 
-            createMQConnection();
             createDBConnection();
 
             while (true) {
@@ -103,62 +81,17 @@ public class IBM_WMQ_Messeage_Generator {
                     try_number_not_found_new_file++;
                     if (try_number_not_found_new_file == MAX_NUMBER_TRY_BEFORE_CLOSE_CONNECTION) {
                         closeDBConnection();
-                        closeMQConnection();
                     }
                     Thread.sleep(SLEEP_MILISECOND_IF_NOT_FOUND_NEW_FILE);
                 }
             }
-//            closeMQConnection();
 //            closeDBConnection();
-        } catch (JMSException | ClassNotFoundException | SQLException ex) {
+        } catch (ClassNotFoundException | SQLException ex) {
             Logger.getLogger(IBM_WMQ_Messeage_Generator.class.getName()).log(Level.SEVERE, null, ex);
         } catch (IOException ex) {
             Logger.getLogger(IBM_WMQ_Messeage_Generator.class.getName()).log(Level.SEVERE, null, ex);
             System.out.println("Can not read config file");
         }
-    }
-
-    /**
-     * Make connection to IBM MQ
-     *
-     * @throws JMSException
-     */
-    public static void createMQConnection() throws JMSException {
-        if (isMQConnected) {
-            return;
-        }
-        System.out.println("Connecting to MQ");
-        MQQueueConnectionFactory cf = new MQQueueConnectionFactory();
-        cf.setHostName(HOST_NAME);
-        cf.setPort(PORT_NUMBER);
-        cf.setTransportType(JMSC.MQJMS_TP_CLIENT_MQ_TCPIP);
-        cf.setQueueManager(QUEUE_MANAGER_NAME);
-        cf.setChannel("SYSTEM.DEF.SVRCONN");
-        MQconnection = (MQQueueConnection) cf.createQueueConnection(LOGIN_USERNAME, LOGIN_PASSWORD);
-        session = (MQQueueSession) MQconnection.createQueueSession(false, Session.AUTO_ACKNOWLEDGE);
-        MQQueue queue = (MQQueue) session.createQueue(QUEUE_NAME);
-        sender = (MQQueueSender) session.createSender((Queue) queue);
-        sender.setPriority(0); //if not, default is 4
-        sender.setDeliveryMode(DeliveryMode.PERSISTENT); //DeliveryMode.PERSISTENT, the default
-        MQconnection.start();
-        isMQConnected = true;
-        System.out.println("MQ connected");
-    }
-
-    /**
-     * Close connection to IBM MQ
-     *
-     * @throws JMSException
-     */
-    public static void closeMQConnection() throws JMSException {
-        if (!isMQConnected) {
-            return;
-        }
-        sender.close();
-        session.close();
-        MQconnection.close();
-        isMQConnected = false;
-        System.out.println("MQ connection is closed");
     }
 
     /**
@@ -195,40 +128,15 @@ public class IBM_WMQ_Messeage_Generator {
     }
 
     /**
-     * Make and put Message to IBM MQ
-     *
-     * @param content The Message's string content want to put to MQ
-     * @throws JMSException
-     */
-    public static void putMesseageToMQ(String content) throws JMSException {
-        JMSTextMessage message = (JMSTextMessage) session.createTextMessage(content);
-        sender.send(message);
-    }
-
-    /**
-     * generate random message by number_of_message and put to MQ
-     *
-     * @param number_of_message The number want to generate
-     * @throws JMSException
-     */
-    public static void generateRandomMessageByNumberOfTimes(int number_of_message) throws JMSException {
-        for (int i = 0; i < number_of_message; i++) {
-            long uniqueNumber = System.currentTimeMillis() % 1000;
-            putMesseageToMQ("random number: " + uniqueNumber);
-        }
-    }
-
-    /**
-     * Get new text files, move them to local, put to MQ and log to database
+     * Get new text files, move them to local, put Messages to database and log read file to database
      *
      * @param server_folder_address_url Server folder address that has text
-     * files
      * @param local_folder_address_url Server folder address that has text files
      * @return The number of file has been processed
-     * @throws JMSException
      * @throws SQLException
+     * @throws ClassNotFoundException 
      */
-    private static int putMessageFromFolder(String server_folder_address_url, String local_folder_address_url) throws JMSException, SQLException, ClassNotFoundException {
+    private static int putMessageFromFolder(String server_folder_address_url, String local_folder_address_url) throws SQLException, ClassNotFoundException {
         int process_file = 0;
         File server_folder = new File(server_folder_address_url);
         File local_folder = new File(local_folder_address_url);
@@ -248,7 +156,6 @@ public class IBM_WMQ_Messeage_Generator {
                     if (!one_time_flag)
                     {
                         // Try to create connection
-                        createMQConnection();
                         createDBConnection();
                         try_number_not_found_new_file = 0;
 
@@ -293,10 +200,9 @@ public class IBM_WMQ_Messeage_Generator {
                             continue;
                         }
 
-                        // Read each line then insert Msg to MQ
+                        // Read each line then insert Msg to DB
                         SimpleDateFormat format_insert_file_time = new SimpleDateFormat("YYYY/MM/dd HH:mm:ss:SSS");
                         String insert_file_time_string = format_insert_file_time.format(new Date());
-                        int seqNo = 0;
                         System.out.println("--- Reading file: " + local_fle.getName());
                         try {
                             FileReader in = new FileReader(local_fle);
@@ -304,10 +210,7 @@ public class IBM_WMQ_Messeage_Generator {
                             String line;
                             while ((line = br.readLine()) != null) {
                                 if (!"".equalsIgnoreCase(line)) {
-                                    // merged MQ Insert date and Seq Number to message, split by ","
-                                    seqNo++;
-                                    line = insert_file_time_string + "," + seqNo + "," + line;
-                                    putMesseageToMQ(line);
+                                    putMesseageToDB(line);
                                 }
                             }
                         } catch (FileNotFoundException ex) {
@@ -337,23 +240,6 @@ public class IBM_WMQ_Messeage_Generator {
         Properties prop = new Properties();
         InputStream inputConfigStream = new FileInputStream(CONFIG_FILE);
         prop.load(inputConfigStream);
-        HOST_NAME = prop.getProperty("mq_host_name");
-        System.out.println("mq_host_name = " + HOST_NAME);
-        try {
-            PORT_NUMBER = Integer.parseInt(prop.getProperty("mq_port_number"));
-            System.out.println("mq_port_number = " + PORT_NUMBER);
-        } catch (NumberFormatException ex) {
-            Logger.getLogger(IBM_WMQ_Messeage_Generator.class.getName()).log(Level.SEVERE, null, ex);
-            System.out.println("Port number must be integer");
-        }
-        QUEUE_MANAGER_NAME = prop.getProperty("mq_queue_manager");
-        System.out.println("mq_queue_manager = " + QUEUE_MANAGER_NAME);
-        QUEUE_NAME = prop.getProperty("mq_queue_name");
-        System.out.println("mq_queue_name = " + QUEUE_NAME);
-        LOGIN_USERNAME = prop.getProperty("mq_os_login_user");
-        System.out.println("mq_os_login_user = " + LOGIN_USERNAME);
-        LOGIN_PASSWORD = prop.getProperty("mq_os_login_password");
-        System.out.println("mq_os_login_password = " + LOGIN_PASSWORD);
         SERVER_FOLDER_ACCESS_URL = prop.getProperty("server_folder_url");
         System.out.println("server_folder_url = " + SERVER_FOLDER_ACCESS_URL);
         LOCAL_FOLDER_ACCESS_URL = prop.getProperty("local_folder_url");
@@ -372,5 +258,9 @@ public class IBM_WMQ_Messeage_Generator {
             System.out.println("Sleep time(miliseconds) must be integer");
         }
         System.out.println("Done loading Configuration");
+    }
+
+    private static void putMesseageToDB(String line) {
+        throw new UnsupportedOperationException("Not supported yet."); //To change body of generated methods, choose Tools | Templates.
     }
 }
