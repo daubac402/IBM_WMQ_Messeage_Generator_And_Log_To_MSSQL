@@ -50,10 +50,9 @@ public class IBM_WMQ_Messeage_Generator {
     private static String JDBC_DB_USER;
     private static String JDBC_DB_PASSWORD;
     private static int SLEEP_MILISECOND_IF_NOT_FOUND_NEW_FILE;
-    private static boolean isMQConnected = false;
     private static boolean isDBConnected = false;
     private static int try_number_not_found_new_file = 0;
-    
+
     /**
      * main function
      *
@@ -128,13 +127,14 @@ public class IBM_WMQ_Messeage_Generator {
     }
 
     /**
-     * Get new text files, move them to local, put Messages to database and log read file to database
+     * Get new text files, move them to local, put Messages to database and log
+     * read file to database
      *
      * @param server_folder_address_url Server folder address that has text
      * @param local_folder_address_url Server folder address that has text files
      * @return The number of file has been processed
      * @throws SQLException
-     * @throws ClassNotFoundException 
+     * @throws ClassNotFoundException
      */
     private static int putMessageFromFolder(String server_folder_address_url, String local_folder_address_url) throws SQLException, ClassNotFoundException {
         int process_file = 0;
@@ -144,6 +144,8 @@ public class IBM_WMQ_Messeage_Generator {
         // Get file from server folder
         boolean one_time_flag = false;
         String last_read_file_name = "";
+        int seq_no = 0;
+        String last_folder_name = "";
         File[] server_file_list = server_folder.listFiles();
         if (server_file_list != null && server_file_list.length > 0) {
             Arrays.sort(server_file_list);
@@ -153,26 +155,29 @@ public class IBM_WMQ_Messeage_Generator {
 //                }
 
                 if (!server_file.isDirectory() && server_file.getName().endsWith(".txt")) {
-                    if (!one_time_flag)
-                    {
+                    if (!one_time_flag) {
                         // Try to create connection
                         createDBConnection();
                         try_number_not_found_new_file = 0;
 
                         // Get the last file that read
-                        ResultSet rs = statement.executeQuery("SELECT IFFILENAME FROM mqinsfile WHERE ROWNUM = 1 ORDER BY MQINSERTDATE DESC");
+                        ResultSet rs = statement.executeQuery("SELECT FOLDERNAME, SEQNO, IFFILENAME FROM S_MSGFILE WHERE ROWNUM <= 1 ORDER BY FOLDERNAME DESC, SEQNO DESC");
                         while (rs.next()) {
+                            last_folder_name = rs.getString("FOLDERNAME");
+                            seq_no = rs.getInt("SEQNO");
                             last_read_file_name = rs.getString("IFFILENAME");
                             break;
                         }
                         if (last_read_file_name.isEmpty()) {
                             System.out.println(">>> Last read filename not found, Start reading all files.");
                         } else {
+                            System.out.println(">>> Last folder name  : " + last_folder_name);
+                            System.out.println(">>> Last SeqNo        : " + seq_no);
                             System.out.println(">>> Last read filename: " + last_read_file_name);
                         }
                         one_time_flag = true;
                     }
-                    
+
                     //check exist folder, if not create folder at local following: YYYYMMDD_HH
                     SimpleDateFormat format_child_local_folder_date = new SimpleDateFormat("YYYY_MM_dd_HH");
                     String child_local_folder_name = format_child_local_folder_date.format(new Date());
@@ -185,6 +190,15 @@ public class IBM_WMQ_Messeage_Generator {
                             System.out.println("Can not create new folder: " + child_local_folder.getAbsolutePath());
                         }
                     }
+                    
+                    // New child_local_folder_name -> should reset SeqNo
+                    if (!last_folder_name.equalsIgnoreCase(child_local_folder_name))
+                    {
+                        last_folder_name = child_local_folder_name;
+                        seq_no = 0;
+                        System.out.println(">> New child_local_folder_name is set. Reset seq_no to 1");
+                    }
+                    
                     try {
                         //move file to local
                         Files.move(
@@ -202,7 +216,6 @@ public class IBM_WMQ_Messeage_Generator {
 
                         // Read each line then insert Msg to DB
                         SimpleDateFormat format_insert_file_time = new SimpleDateFormat("YYYY/MM/dd HH:mm:ss:SSS");
-                        String insert_file_time_string = format_insert_file_time.format(new Date());
                         System.out.println("--- Reading file: " + local_fle.getName());
                         try {
                             FileReader in = new FileReader(local_fle);
@@ -210,19 +223,13 @@ public class IBM_WMQ_Messeage_Generator {
                             String line;
                             while ((line = br.readLine()) != null) {
                                 if (!"".equalsIgnoreCase(line)) {
-                                    putMesseageToDB(line);
+                                    seq_no++;
+                                    putMesseageToDB(child_local_folder_name, seq_no, local_fle.getName(), line, format_insert_file_time.format(new Date()));
                                 }
                             }
                         } catch (FileNotFoundException ex) {
                             Logger.getLogger(IBM_WMQ_Messeage_Generator.class.getName()).log(Level.SEVERE, null, ex);
                         }
-
-                        // Log read file to DB
-                        System.out.println("+++ Marking As Read to Database: " + local_fle.getName());
-                        statement.execute("INSERT INTO mqinsfile VALUES ('"
-                                + insert_file_time_string
-                                + "','" + child_local_folder_name
-                                + "','" + local_fle.getName() + "')");
 
                         process_file++;
                     } catch (IOException ex) {
@@ -260,7 +267,27 @@ public class IBM_WMQ_Messeage_Generator {
         System.out.println("Done loading Configuration");
     }
 
-    private static void putMesseageToDB(String line) {
-        throw new UnsupportedOperationException("Not supported yet."); //To change body of generated methods, choose Tools | Templates.
+    private static void putMesseageToDB(String child_local_folder_name, int seq_no, String local_fle_name, String message_content, String insert_file_time_string) {
+        // detact receivedMessage; receivedMessage must be in format: Inserted_time,SeqNo,content
+        String[] parts = message_content.split("\",\""); // ","
+        if (parts.length == 4) {
+            String querry_string = "INSERT INTO S_MSGFILE(FOLDERNAME, SEQNO, IFFILENAME, KAIINKEY, ITEM01, ITEM02, ITEM03, INSERTDATE) VALUES ('"
+                    + child_local_folder_name
+                    + "'," + seq_no
+                    + ",'" + local_fle_name
+                    + "','" + parts[0].replaceAll("\"", "")
+                    + "','" + parts[1].replaceAll("\"", "")
+                    + "','" + parts[2].replaceAll("\"", "")
+                    + "','" + parts[3].replaceAll("\"", "")
+                    + "','" + insert_file_time_string + "')";
+            try {
+                statement.execute(querry_string);
+            } catch (SQLException ex) {
+                Logger.getLogger(IBM_WMQ_Messeage_Generator.class.getName()).log(Level.SEVERE, null, ex);
+                System.out.println("Insert message to database failed: " + querry_string);
+            }
+        } else {
+            System.out.println("Message Construction is not correct: " + message_content);
+        }
     }
 }
