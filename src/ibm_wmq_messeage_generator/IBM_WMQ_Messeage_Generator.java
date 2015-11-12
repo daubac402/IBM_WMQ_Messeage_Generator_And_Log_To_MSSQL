@@ -269,7 +269,7 @@ public class IBM_WMQ_Messeage_Generator {
                     //check exist folder, if not create folder at local following: YYYYMMDD_HH
                     SimpleDateFormat format_child_local_folder_date = new SimpleDateFormat("YYYY_MM_dd_HH");
                     String child_local_folder_name = format_child_local_folder_date.format(new Date());
-                    File child_local_folder = new File(local_folder.getAbsolutePath() + "\\" + child_local_folder_name);
+                    File child_local_folder = new File(local_folder.getAbsolutePath() + "/" + child_local_folder_name);
                     if (!child_local_folder.exists()) {
                         boolean mkdir_result = child_local_folder.mkdir();
                         if (mkdir_result) {
@@ -282,11 +282,11 @@ public class IBM_WMQ_Messeage_Generator {
                         //move file to local
                         Files.move(
                                 server_file.toPath(),
-                                FileSystems.getDefault().getPath(child_local_folder.getAbsolutePath() + "\\" + server_file.getName()),
+                                FileSystems.getDefault().getPath(child_local_folder.getAbsolutePath() + "/" + server_file.getName()),
                                 StandardCopyOption.REPLACE_EXISTING
                         );
-                        System.out.println("Moved file from " + server_file.toPath().toString() + " to " + child_local_folder.getAbsolutePath() + "\\" + server_file.getName());
-                        File local_fle = new File(child_local_folder.getAbsolutePath() + "\\" + server_file.getName());
+                        System.out.println("Moved file from " + server_file.toPath().toString() + " to " + child_local_folder.getAbsolutePath() + "/" + server_file.getName());
+                        File local_fle = new File(child_local_folder.getAbsolutePath() + "/" + server_file.getName());
 
                         //check read file or not
                         if (!last_read_file_name.isEmpty() && last_read_file_name.compareTo(local_fle.getName()) >= 0) {
